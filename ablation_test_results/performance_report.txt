@@ -1,0 +1,315 @@
+消融模型测试报告 - SGPDNet_NoFiLM
+============================================================
+生成时间: 2025-06-03 12:22:38
+
+模型信息:
+  模型类型: SGPDNet_NoFiLM
+  模型路径: ablation_results/no_film_20250527_181145/no_film/best_model.pth
+
+模型能力:
+  has_predict_mode: False
+  has_mask_support: True
+  has_multiple_modes: True
+  requires_label: True
+  feature_dim: 512
+  is_simple_baseline: False
+
+数据集统计:
+  Probe样本总数: 565
+  Gallery样本总数: 294
+  Probe闭集身份: 45
+  Probe开集身份: 11
+  Gallery闭集身份: 45
+  Gallery开集身份: 11
+
+性能结果:
+------------------------------
+整体性能:
+  mAP: 0.6375
+  Rank-1: 0.7310
+  Rank-5: 0.8425
+  Rank-10: 0.9150
+  有效查询数: 565
+
+闭集对闭集性能:
+  mAP: 0.9367
+  Rank-1: 0.9511
+  Rank-5: 0.9694
+  Rank-10: 0.9725
+  Probe样本: 327
+  Gallery样本: 198
+
+开集对开集性能:
+  mAP: 0.3977
+  Rank-1: 0.5924
+  Rank-5: 0.8319
+  Rank-10: 0.9118
+  Probe样本: 238
+  Gallery样本: 96
+
+全集性能:
+  mAP: 0.6375
+  Rank-1: 0.7310
+  Rank-5: 0.8425
+  Rank-10: 0.9150
+  Probe样本: 565
+  Gallery样本: 294
+
+特征统计:
+  Probe特征形状: [565, 512]
+  Gallery特征形状: [294, 512]
+  特征均值: 0.000691
+  特征标准差: 0.044189
+
+============================================================消融模型测试报告 - SGPDNet_NoPDSLRM
+============================================================
+生成时间: 2025-06-03 12:24:13
+
+模型信息:
+  模型类型: SGPDNet_NoPDSLRM
+  模型路径: ablation_results/no_pdslrm_20250526_162026/no_pdslrm/best_model.pth
+
+模型能力:
+  has_predict_mode: False
+  has_mask_support: True
+  has_multiple_modes: True
+  requires_label: True
+  feature_dim: 512
+  is_simple_baseline: False
+
+数据集统计:
+  Probe样本总数: 565
+  Gallery样本总数: 294
+  Probe闭集身份: 45
+  Probe开集身份: 11
+  Gallery闭集身份: 45
+  Gallery开集身份: 11
+
+性能结果:
+------------------------------
+整体性能:
+  mAP: 0.6544
+  Rank-1: 0.7575
+  Rank-5: 0.8690
+  Rank-10: 0.9381
+  有效查询数: 565
+
+闭集对闭集性能:
+  mAP: 0.9314
+  Rank-1: 0.9419
+  Rank-5: 0.9602
+  Rank-10: 0.9786
+  Probe样本: 327
+  Gallery样本: 198
+
+开集对开集性能:
+  mAP: 0.4242
+  Rank-1: 0.6261
+  Rank-5: 0.8782
+  Rank-10: 0.9412
+  Probe样本: 238
+  Gallery样本: 96
+
+全集性能:
+  mAP: 0.6544
+  Rank-1: 0.7575
+  Rank-5: 0.8690
+  Rank-10: 0.9381
+  Probe样本: 565
+  Gallery样本: 294
+
+特征统计:
+  Probe特征形状: [565, 512]
+  Gallery特征形状: [294, 512]
+  特征均值: 0.000917
+  特征标准差: 0.044185
+
+============================================================消融模型测试报告 - SGPDNet_NoSGCLFA
+============================================================
+生成时间: 2025-06-03 12:25:26
+
+模型信息:
+  模型类型: SGPDNet_NoSGCLFA
+  模型路径: ablation_results/no_sgclfa_20250526_213221/no_sgclfa/best_model.pth
+
+模型能力:
+  has_predict_mode: False
+  has_mask_support: True
+  has_multiple_modes: True
+  requires_label: True
+  feature_dim: 512
+  is_simple_baseline: False
+
+数据集统计:
+  Probe样本总数: 565
+  Gallery样本总数: 294
+  Probe闭集身份: 45
+  Probe开集身份: 11
+  Gallery闭集身份: 45
+  Gallery开集身份: 11
+
+性能结果:
+------------------------------
+整体性能:
+  mAP: 0.6510
+  Rank-1: 0.7823
+  Rank-5: 0.8726
+  Rank-10: 0.9186
+  有效查询数: 565
+
+闭集对闭集性能:
+  mAP: 0.9162
+  Rank-1: 0.9327
+  Rank-5: 0.9480
+  Rank-10: 0.9541
+  Probe样本: 327
+  Gallery样本: 198
+
+开集对开集性能:
+  mAP: 0.4012
+  Rank-1: 0.6597
+  Rank-5: 0.8445
+  Rank-10: 0.9160
+  Probe样本: 238
+  Gallery样本: 96
+
+全集性能:
+  mAP: 0.6510
+  Rank-1: 0.7823
+  Rank-5: 0.8726
+  Rank-10: 0.9186
+  Probe样本: 565
+  Gallery样本: 294
+
+特征统计:
+  Probe特征形状: [565, 512]
+  Gallery特征形状: [294, 512]
+  特征均值: -0.000335
+  特征标准差: 0.044193
+
+============================================================消融模型测试报告 - SGPDNet_NoStructureGuidance
+============================================================
+生成时间: 2025-06-03 12:26:02
+
+模型信息:
+  模型类型: SGPDNet_NoStructureGuidance
+  模型路径: ablation_results/no_structure_guidance_20250527_213018/no_structure_guidance/best_model.pth
+
+模型能力:
+  has_predict_mode: False
+  has_mask_support: True
+  has_multiple_modes: True
+  requires_label: True
+  feature_dim: 512
+  is_simple_baseline: False
+
+数据集统计:
+  Probe样本总数: 565
+  Gallery样本总数: 294
+  Probe闭集身份: 45
+  Probe开集身份: 11
+  Gallery闭集身份: 45
+  Gallery开集身份: 11
+
+性能结果:
+------------------------------
+整体性能:
+  mAP: 0.6436
+  Rank-1: 0.7770
+  Rank-5: 0.8832
+  Rank-10: 0.9398
+  有效查询数: 565
+
+闭集对闭集性能:
+  mAP: 0.9231
+  Rank-1: 0.9266
+  Rank-5: 0.9541
+  Rank-10: 0.9694
+  Probe样本: 327
+  Gallery样本: 198
+
+开集对开集性能:
+  mAP: 0.3863
+  Rank-1: 0.6597
+  Rank-5: 0.9076
+  Rank-10: 0.9790
+  Probe样本: 238
+  Gallery样本: 96
+
+全集性能:
+  mAP: 0.6436
+  Rank-1: 0.7770
+  Rank-5: 0.8832
+  Rank-10: 0.9398
+  Probe样本: 565
+  Gallery样本: 294
+
+特征统计:
+  Probe特征形状: [565, 512]
+  Gallery特征形状: [294, 512]
+  特征均值: -0.001299
+  特征标准差: 0.044175
+
+============================================================消融模型测试报告 - SimpleLightCNNBaseline
+============================================================
+生成时间: 2025-06-03 12:26:30
+
+模型信息:
+  模型类型: SimpleLightCNNBaseline
+  模型路径: ablation_results/simple_cnn_baseline_20250526_130153/simple_cnn_baseline/best_model.pth
+
+模型能力:
+  has_predict_mode: False
+  has_mask_support: True
+  has_multiple_modes: True
+  requires_label: True
+  feature_dim: 512
+  is_simple_baseline: True
+
+数据集统计:
+  Probe样本总数: 565
+  Gallery样本总数: 294
+  Probe闭集身份: 45
+  Probe开集身份: 11
+  Gallery闭集身份: 45
+  Gallery开集身份: 11
+
+性能结果:
+------------------------------
+整体性能:
+  mAP: 0.5840
+  Rank-1: 0.8071
+  Rank-5: 0.9044
+  Rank-10: 0.9487
+  有效查询数: 565
+
+闭集对闭集性能:
+  mAP: 0.8514
+  Rank-1: 0.9174
+  Rank-5: 0.9541
+  Rank-10: 0.9664
+  Probe样本: 327
+  Gallery样本: 198
+
+开集对开集性能:
+  mAP: 0.4148
+  Rank-1: 0.7647
+  Rank-5: 0.9370
+  Rank-10: 0.9748
+  Probe样本: 238
+  Gallery样本: 96
+
+全集性能:
+  mAP: 0.5840
+  Rank-1: 0.8071
+  Rank-5: 0.9044
+  Rank-10: 0.9487
+  Probe样本: 565
+  Gallery样本: 294
+
+特征统计:
+  Probe特征形状: [565, 512]
+  Gallery特征形状: [294, 512]
+  特征均值: -0.000056
+  特征标准差: 0.044194
+
