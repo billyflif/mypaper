@@ -174,54 +174,73 @@ def get_warmup_lr(current_step, warmup_steps, base_lr, warmup_start_lr):
     else:
         return base_lr
 
+
+
 def get_dynamic_loss_weights(epoch, total_epochs, use_warmup_simple, losses_weights):
-    """动态调整损失权重，改进泛化能力"""
-    if use_warmup_simple and epoch < 10:
-        # 前10轮只使用分类损失和center loss
+    """
+    动态调整损失权重 - 修复版本 (解决假设1)
+    采用课程学习策略：
+    1. 预训练引导分支 (Re-ID loss = 0)
+    2. 淡入Re-ID损失
+    3. 全损失训练
+    """
+
+    # --- 可在此处调整阶段长度 ---
+    # 阶段1：只训练引导分支（Rec + LSC）。
+    # 这是为了解决VAE重建差的问题，强迫模型先学会重建。
+    stage1_epochs = 20
+
+    # 阶段2：淡入Re-ID损失，引导分支权重降低
+    stage2_epochs = 40
+    # --------------------------
+
+    # losses_weights 包含了你设置的目标权重，例如：
+    # losses_weights = {'rec': 0.3, 'lsc': 0.8, 'g_disc': 0.1, ...}
+
+    if epoch < stage1_epochs:
+        # 阶段1：强制模型学习重建和一致性。
+        print(f"Loss Strategy (Epoch {epoch + 1}): STAGE 1 - Guidance Pre-training")
         return {
-            'rec': 0.0,
-            'lsc': 0.0,
-            'g_disc': 0.0,
-            'center': 0.01,  # 新增center loss权重
+            'reid': 0.0,  # <- 最关键的修改：关闭 Re-ID 损失
+            'rec': 1.0,  # 提高重建权重
+            'lsc': 1.0,  # 提高一致性权重
+            'g_disc': 0.0,  # 关闭其他辅助损失
+            'center': 0.0,
             'domain_adapt': 0.0
         }
-    elif use_warmup_simple and epoch < 30:
-        # 30轮前逐渐增加其他损失
-        progress = (epoch - 10) / 20.0
+    elif epoch < stage2_epochs:
+        # 阶段2：逐步淡入 Re-ID 损失和其他辅助损失
+        # 计算 0 -> 1 的平滑过渡因子
+        progress = (epoch - stage1_epochs) / (stage2_epochs - stage1_epochs)
         smooth_factor = 0.5 * (1 - math.cos(math.pi * progress))
+
+        print(f"Loss Strategy (Epoch {epoch + 1}): STAGE 2 - Fading in Re-ID (Factor: {smooth_factor:.3f})")
+
+        # Re-ID 损失从 0 缓慢增加到 1.0
+        reid_weight = smooth_factor
+
+        # 引导损失从 1.0 缓慢降低到你设定的目标值
+        rec_weight = 1.0 - (1.0 - losses_weights.get('rec', 0.3)) * smooth_factor
+        lsc_weight = 1.0 - (1.0 - losses_weights.get('lsc', 0.8)) * smooth_factor
+
         return {
-            'rec': 0.3 * smooth_factor,  # 增加重建损失权重
-            'lsc': 0.4 * smooth_factor,  # 增加一致性损失权重
-            'g_disc': 0.05 * smooth_factor,
-            'center': 0.01 + 0.02 * smooth_factor,  # 逐渐增加center loss
-            'domain_adapt': 0.1 * smooth_factor  # 添加域适应损失
-        }
-    elif epoch < 10:
-        return {
-            'rec': 0.0,
-            'lsc': 0.0,
-            'g_disc': 0.0,
-            'center': 0.01,
-            'domain_adapt': 0.0
-        }
-    elif epoch < 50:
-        # 标准训练阶段：平衡各项损失
-        return {
-            'rec': 0.4,  # 增加重建损失
-            'lsc': 0.6,  # 增加一致性损失
-            'g_disc': 0.1,  # 减少判别损失
-            'center': 0.03,  # center loss促进泛化
-            'domain_adapt': 0.15  # 域适应损失
+            'reid': reid_weight,
+            'rec': rec_weight,
+            'lsc': lsc_weight,
+            'g_disc': losses_weights.get('g_disc', 0.1) * smooth_factor,
+            'center': losses_weights.get('center', 0.03) * smooth_factor,
+            'domain_adapt': losses_weights.get('domain_adapt', 0.15) * smooth_factor
         }
     else:
-        # 后期阶段：强化泛化
-        progress = min(1.0, (epoch - 50) / 50.0)
+        # 阶段3：使用你配置的标准损失权重
+        print(f"Loss Strategy (Epoch {epoch + 1}): STAGE 3 - Full Training")
         return {
-            'rec': 0.5 + 0.2 * progress,  # 进一步增加重建损失
-            'lsc': 0.8 + 0.2 * progress,  # 进一步增加一致性损失
-            'g_disc': 0.05,  # 进一步减少判别损失
-            'center': 0.05,  # 增强center loss
-            'domain_adapt': 0.2  # 增强域适应
+            'reid': 1.0,  # 启用 Re-ID 损失
+            'rec': losses_weights.get('rec', 0.3),
+            'lsc': losses_weights.get('lsc', 0.8),
+            'g_disc': losses_weights.get('g_disc', 0.1),
+            'center': losses_weights.get('center', 0.03),
+            'domain_adapt': losses_weights.get('domain_adapt', 0.15)
         }
 
 
@@ -266,19 +285,21 @@ def visualize_model_architecture(model, save_dir):
         print(f"生成模型架构可视化时出错: {e}")
 
 
+
+
 def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_train, device, losses_weights, loss_history,
                   use_warmup, warmup_steps, base_lr, warmup_start_lr, use_simplified_training=False,
                   scaler=None, grad_clip_norm=1.0, visualize_every_n_iters=100,
                   accumulation_steps=1):
-    """改进的训练一个epoch函数"""
+    """改进的训练一个epoch函数 (已应用'reid'权重修复)"""
 
     total_loss_epoch = 0.0
     re_id_loss_unweighted_epoch = 0.0
     rec_loss_unweighted_epoch = 0.0
     lsc_loss_unweighted_epoch = 0.0
     g_disc_loss_unweighted_epoch = 0.0
-    center_loss_unweighted_epoch = 0.0  # 新增
-    domain_adapt_loss_unweighted_epoch = 0.0  # 新增
+    center_loss_unweighted_epoch = 0.0
+    domain_adapt_loss_unweighted_epoch = 0.0
     correct_predictions = 0
     total_samples = 0
 
@@ -287,7 +308,6 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
 
     global_step_offset = epoch * epoch_step
 
-    # 检查模型参数是否有NaN
     has_nan = False
     for name, param in model_train.named_parameters():
         if param.requires_grad and torch.isnan(param).any():
@@ -299,7 +319,6 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
 
     optimizer.zero_grad()
 
-    # 动态梯度裁剪值
     if epoch < 10:
         effective_clip_norm = grad_clip_norm * 0.5
     elif epoch < 30:
@@ -316,169 +335,142 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
             print(f"Warn: Skip None batch iter {iteration + 1}")
             continue
 
-        # 接收两张图像：原图、差异化增强图像
         images1, images2, subject_masks, labels = batch_data
-        images1 = images1.to(device)  # 原图（主路径）
-        images2 = images2.to(device)  # 差异化增强图像
+        images1 = images1.to(device)
+        images2 = images2.to(device)
         subject_masks = subject_masks.to(device)
         labels = labels.to(device)
         batch_samples = labels.size(0)
         total_samples += batch_samples
 
-        # 学习率预热
         if use_warmup and current_global_step < warmup_steps:
             lr = get_warmup_lr(current_global_step, warmup_steps, base_lr, warmup_start_lr)
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
         try:
+            # --- 默认的损失值 ---
+            re_id_loss = torch.tensor(0.0, device=device)
+            rec_loss = torch.tensor(0.0, device=device)
+            lsc_loss = torch.tensor(0.0, device=device)
+            g_disc_loss = torch.tensor(0.0, device=device)
+            center_loss = torch.tensor(0.0, device=device)
+            domain_adapt_loss = torch.tensor(0.0, device=device)
+
             if scaler:  # FP16
                 from torch.cuda.amp import autocast
                 with autocast():
-                    if use_simplified_training:
-                        # 简化训练：仅使用基础分类损失和center loss
-                        reid_logits = model_train(images1, images2, subject_masks, labels, mode="train")
-                        re_id_loss = nn.CrossEntropyLoss()(reid_logits, labels)
+                    reid_logits = model_train(images1, images2, subject_masks, labels, mode="train")
 
-                        # 添加center loss
-                        center_loss = model_train.compute_center_loss(labels)
+                    if reid_logits is None:
+                        print(f"警告: reid_logits 为 None，跳过批次")
+                        continue
 
-                        total_loss = (re_id_loss + losses_weights.get('center', 0) * center_loss) / accumulation_steps
-                        rec_loss = lsc_loss = g_disc_loss = domain_adapt_loss = torch.tensor(0.0, device=device)
-                    else:
-                        # 标准训练：使用所有损失
-                        reid_logits = model_train(images1, images2, subject_masks, labels, mode="train")
-                        re_id_loss = nn.CrossEntropyLoss()(reid_logits, labels)
+                    # 即使权重为0，也计算 Re-ID 损失（用于统计准确率）
+                    re_id_loss = nn.CrossEntropyLoss()(reid_logits, labels)
+                    re_id_loss_clamped = torch.clamp(re_id_loss, max=10.0)
 
-                        # 裁剪各损失值防止过大
-                        re_id_loss = torch.clamp(re_id_loss, max=10.0)
-
-                        # 重建损失
+                    # 只有在权重>0时才计算其他损失，以节省计算
+                    if losses_weights.get('rec', 0) > 0:
                         rec_loss = model_train.compute_reconstruction_loss(images1)
                         rec_loss = torch.clamp(rec_loss, max=1.0)
-
-                        # LSC损失：增强图与原图的一致性
+                    if losses_weights.get('lsc', 0) > 0:
                         lsc_loss = model_train.compute_lsc_loss()
                         lsc_loss = torch.clamp(lsc_loss, max=1.0)
-
-                        # 辅助判别损失
+                    if losses_weights.get('g_disc', 0) > 0:
                         g_disc_loss = model_train.compute_auxiliary_loss(labels)
                         g_disc_loss = torch.clamp(g_disc_loss, max=5.0)
-
-                        # Center Loss
+                    if losses_weights.get('center', 0) > 0:
                         center_loss = model_train.compute_center_loss(labels)
                         center_loss = torch.clamp(center_loss, max=2.0)
-
-                        # Domain Adaptation Loss
-                        # 创建域标签：0为原图，1为增强图
-                        domain_labels = torch.cat([
-                            torch.zeros(batch_samples, dtype=torch.long, device=device),  # 原图域
-                            torch.ones(batch_samples, dtype=torch.long, device=device)  # 增强图域
-                        ])
-
-                        # 为域适应损失准备特征
-                        # 需要先计算增强图的特征
+                    if losses_weights.get('domain_adapt', 0) > 0:
                         with torch.no_grad():
                             z0_aug_star, _ = model_train._perform_latent_inversion(images2)
                             zs_aug = model_train.pdslrm(z0_aug_star)
                             fg_aug = model_train.structure_feature_extractor(zs_aug)
                             fd_aug = model_train.lightcnn(images2, fg=fg_aug, subject_mask=subject_masks)
-
-                        # 合并原图和增强图特征
                         combined_features = torch.cat([model_train.fd, fd_aug], dim=0)
+                        domain_labels = torch.cat([
+                            torch.zeros(batch_samples, dtype=torch.long, device=device),
+                            torch.ones(batch_samples, dtype=torch.long, device=device)
+                        ])
                         domain_adapt_loss = model_train.compute_domain_adaptation_loss(domain_labels)
                         domain_adapt_loss = torch.clamp(domain_adapt_loss, max=2.0)
 
-                        # 计算总损失
-                        total_loss = (re_id_loss +
-                                      losses_weights.get('rec', 0) * rec_loss +
-                                      losses_weights.get('lsc', 0) * lsc_loss +
-                                      losses_weights.get('g_disc', 0) * g_disc_loss +
-                                      losses_weights.get('center', 0) * center_loss +
-                                      losses_weights.get('domain_adapt', 0) * domain_adapt_loss) / accumulation_steps
-
-                # 反向传播
-                scaler.scale(total_loss).backward()
-
-                # 梯度累积
-                if (iteration + 1) % accumulation_steps == 0 or (iteration + 1 == epoch_step):
-                    # 检查损失是否为NaN
-                    if torch.isnan(total_loss).any():
-                        print(f"警告: 批次 {iteration + 1} 中的损失为NaN，跳过更新")
-                        optimizer.zero_grad()
-                        continue
-
-                    # 梯度裁剪
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model_train.parameters(), max_norm=effective_clip_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
-            else:  # FP32
-                if use_simplified_training:
-                    # 简化训练
-                    reid_logits = model_train(images1, images2, subject_masks, labels, mode="train")
-                    re_id_loss = nn.CrossEntropyLoss(label_smoothing=0.1)(reid_logits, labels)
-
-                    # 添加center loss
-                    center_loss = model_train.compute_center_loss(labels)
-
-                    total_loss = (re_id_loss + losses_weights.get('center', 0) * center_loss) / accumulation_steps
-                    rec_loss = lsc_loss = g_disc_loss = domain_adapt_loss = torch.tensor(0.0, device=device)
-                else:
-                    # 标准训练
-                    reid_logits = model_train(images1, images2, subject_masks, labels, mode="train")
-                    re_id_loss = nn.CrossEntropyLoss(label_smoothing=0.1)(reid_logits, labels)
-
-                    # 裁剪各损失值防止过大
-                    re_id_loss = torch.clamp(re_id_loss, max=10.0)
-
-                    # 重建损失
-                    rec_loss = model_train.compute_reconstruction_loss(images1)
-                    rec_loss = torch.clamp(rec_loss, max=1.0)
-
-                    # LSC损失
-                    lsc_loss = model_train.compute_lsc_loss()
-                    lsc_loss = torch.clamp(lsc_loss, max=1.0)
-
-                    # 辅助损失
-                    g_disc_loss = model_train.compute_auxiliary_loss(labels)
-                    g_disc_loss = torch.clamp(g_disc_loss, max=5.0)
-
-                    # Center Loss
-                    center_loss = model_train.compute_center_loss(labels)
-                    center_loss = torch.clamp(center_loss, max=2.0)
-
-                    # Domain Adaptation Loss
-                    domain_labels = torch.cat([
-                        torch.zeros(batch_samples, dtype=torch.long, device=device),
-                        torch.ones(batch_samples, dtype=torch.long, device=device)
-                    ])
-
-                    # 计算增强图特征
-                    with torch.no_grad():
-                        z0_aug_star, _ = model_train._perform_latent_inversion(images2)
-                        zs_aug = model_train.pdslrm(z0_aug_star)
-                        fg_aug = model_train.structure_feature_extractor(zs_aug)
-                        fd_aug = model_train.lightcnn(images2, fg=fg_aug, subject_mask=subject_masks)
-
-                    combined_features = torch.cat([model_train.fd, fd_aug], dim=0)
-                    domain_adapt_loss = model_train.domain_adaptation_loss(combined_features, domain_labels)
-                    domain_adapt_loss = torch.clamp(domain_adapt_loss, max=2.0)
-
-                    # 计算总损失
-                    total_loss = (re_id_loss +
+                    # === 关键修改 ===
+                    total_loss = (re_id_loss_clamped * losses_weights.get('reid', 1.0) +
                                   losses_weights.get('rec', 0) * rec_loss +
                                   losses_weights.get('lsc', 0) * lsc_loss +
                                   losses_weights.get('g_disc', 0) * g_disc_loss +
                                   losses_weights.get('center', 0) * center_loss +
                                   losses_weights.get('domain_adapt', 0) * domain_adapt_loss) / accumulation_steps
 
+                    if torch.isnan(total_loss):
+                        print(f"警告: 损失为NaN (FP16)，跳过更新")
+                        optimizer.zero_grad()
+                        continue
+
+                scaler.scale(total_loss).backward()
+
+                if (iteration + 1) % accumulation_steps == 0 or (iteration + 1 == epoch_step):
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model_train.parameters(), max_norm=effective_clip_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+
+            else:  # FP32
+                reid_logits = model_train(images1, images2, subject_masks, labels, mode="train")
+
+                if reid_logits is None:
+                    print(f"警告: reid_logits 为 None，跳过批次")
+                    continue
+
+                re_id_loss = nn.CrossEntropyLoss(label_smoothing=0.1)(reid_logits, labels)
+                re_id_loss_clamped = torch.clamp(re_id_loss, max=10.0)
+
+                if losses_weights.get('rec', 0) > 0:
+                    rec_loss = model_train.compute_reconstruction_loss(images1)
+                    rec_loss = torch.clamp(rec_loss, max=1.0)
+                if losses_weights.get('lsc', 0) > 0:
+                    lsc_loss = model_train.compute_lsc_loss()
+                    lsc_loss = torch.clamp(lsc_loss, max=1.0)
+                if losses_weights.get('g_disc', 0) > 0:
+                    g_disc_loss = model_train.compute_auxiliary_loss(labels)
+                    g_disc_loss = torch.clamp(g_disc_loss, max=5.0)
+                if losses_weights.get('center', 0) > 0:
+                    center_loss = model_train.compute_center_loss(labels)
+                    center_loss = torch.clamp(center_loss, max=2.0)
+                if losses_weights.get('domain_adapt', 0) > 0:
+                    with torch.no_grad():
+                        z0_aug_star, _ = model_train._perform_latent_inversion(images2)
+                        zs_aug = model_train.pdslrm(z0_aug_star)
+                        fg_aug = model_train.structure_feature_extractor(zs_aug)
+                        fd_aug = model_train.lightcnn(images2, fg=fg_aug, subject_mask=subject_masks)
+                    combined_features = torch.cat([model_train.fd, fd_aug], dim=0)
+                    domain_labels = torch.cat([
+                        torch.zeros(batch_samples, dtype=torch.long, device=device),
+                        torch.ones(batch_samples, dtype=torch.long, device=device)
+                    ])
+                    domain_adapt_loss = model_train.domain_adaptation_loss(combined_features, domain_labels)
+                    domain_adapt_loss = torch.clamp(domain_adapt_loss, max=2.0)
+
+                # === 关键修改 ===
+                total_loss = (re_id_loss_clamped * losses_weights.get('reid', 1.0) +
+                              losses_weights.get('rec', 0) * rec_loss +
+                              losses_weights.get('lsc', 0) * lsc_loss +
+                              losses_weights.get('g_disc', 0) * g_disc_loss +
+                              losses_weights.get('center', 0) * center_loss +
+                              losses_weights.get('domain_adapt', 0) * domain_adapt_loss) / accumulation_steps
+
+                if torch.isnan(total_loss):
+                    print(f"警告: 损失为NaN (FP32)，跳过更新")
+                    optimizer.zero_grad()
+                    continue
+
                 total_loss.backward()
 
-                # 梯度累积
                 if (iteration + 1) % accumulation_steps == 0 or (iteration + 1 == epoch_step):
-                    # 梯度检查
                     has_nan_grad = False
                     for param in model_train.parameters():
                         if param.grad is not None and torch.isnan(param.grad).any():
@@ -490,22 +482,20 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
                         optimizer.zero_grad()
                         continue
 
-                    # 梯度裁剪
                     torch.nn.utils.clip_grad_norm_(model_train.parameters(), max_norm=effective_clip_norm)
                     optimizer.step()
                     optimizer.zero_grad()
 
-            # 更新损失统计
+            # 更新损失统计 (使用未加权的损失)
             total_loss_epoch += (total_loss.item() * accumulation_steps) * batch_samples
             re_id_loss_unweighted_epoch += re_id_loss.item() * batch_samples
             rec_loss_unweighted_epoch += rec_loss.item() * batch_samples
             lsc_loss_unweighted_epoch += lsc_loss.item() * batch_samples
             g_disc_loss_unweighted_epoch += g_disc_loss.item() * batch_samples
-            center_loss_unweighted_epoch += center_loss.item() * batch_samples if not use_simplified_training or losses_weights.get(
-                'center', 0) > 0 else 0
-            domain_adapt_loss_unweighted_epoch += domain_adapt_loss.item() * batch_samples if not use_simplified_training else 0
+            center_loss_unweighted_epoch += center_loss.item() * batch_samples
+            domain_adapt_loss_unweighted_epoch += domain_adapt_loss.item() * batch_samples
 
-            # 计算准确率
+            # 计算准确率 (不受损失权重影响)
             with torch.no_grad():
                 preds = torch.argmax(F.softmax(reid_logits, dim=-1), dim=-1)
                 correct_predictions += (preds == labels).sum().item()
@@ -522,11 +512,11 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
         pbar.set_postfix(**{
             'loss': total_loss_epoch / current_total_samples_iter,
             'acc': correct_predictions / current_total_samples_iter,
-            'ReID': re_id_loss_unweighted_epoch / current_total_samples_iter,
-            'Rec': rec_loss_unweighted_epoch / current_total_samples_iter,
-            'LSC': lsc_loss_unweighted_epoch / current_total_samples_iter,
-            'Center': center_loss_unweighted_epoch / current_total_samples_iter,
-            'Domain': domain_adapt_loss_unweighted_epoch / current_total_samples_iter,
+            'ReID_L': re_id_loss_unweighted_epoch / current_total_samples_iter,  # Re-ID
+            'Rec_L': rec_loss_unweighted_epoch / current_total_samples_iter,  # Rec
+            'LSC_L': lsc_loss_unweighted_epoch / current_total_samples_iter,  # LSC
+            'ReID_W': losses_weights.get('reid', 1.0),  # Re-ID 权重
+            'Rec_W': losses_weights.get('rec', 0.0),  # Rec 权重
             'lr': get_lr(optimizer)
         })
         pbar.update(1)
@@ -558,7 +548,6 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
         'train_domain_l': avg_domain_adapt_loss,
     }
     return train_metrics
-
 
 def eval_one_epoch(model_eval, epoch, epoch_step_val, gen_val, device):
     """评估一个epoch - 只使用原图进行评估"""
@@ -857,7 +846,7 @@ if __name__ == "__main__":
 
     # 保存设置
     model_name_suffix = f"{'_sam' if use_sam_model else ''}_win{window_size}"
-    save_dir = f'logs/swin{model_name_suffix}_iters{latent_inversion_iters}_k{sub_centers_k}_s{arcface_s}_m{arcface_m}_rec{losses_weights["rec"]}_lsc{losses_weights["lsc"]}_gdisc{losses_weights["g_disc"]}'
+    save_dir = f'newdata-logs/swin{model_name_suffix}_iters{latent_inversion_iters}_k{sub_centers_k}_s{arcface_s}_m{arcface_m}_rec{losses_weights["rec"]}_lsc{losses_weights["lsc"]}_gdisc{losses_weights["g_disc"]}'
     save_period = 2
     if not os.path.exists(save_dir): os.makedirs(save_dir)
     visualize_freq = 100
@@ -895,7 +884,7 @@ if __name__ == "__main__":
     num_classes = get_num_classes(annotation_path)
     print(f"检测到 {num_classes} 个类别")
 
-    with open(annotation_path, "r", encoding='utf-8') as f:
+    with open(annotation_path, "r", encoding='gbk') as f:
         lines = f.readlines()
     np.random.seed(seed)
     np.random.shuffle(lines)
