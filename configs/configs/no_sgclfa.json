@@ -1,0 +1,21 @@
+{
+  "no_sgclfa": {
+    "description": "禁用SGCLFA注意力机制 - 测试结构引导注意力的作用",
+    "disabled_components": ["sgclfa"],
+    "model_type": "SGPDNet_NoSGCLFA",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.15
+    },
+    "expected_impact": "显著性能下降，无法有效融合生成和判别信息",
+    "hypothesis": "SGCLFA是连接生成和判别分支的关键组件"
+  }
+}

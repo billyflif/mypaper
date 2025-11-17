@@ -653,6 +653,20 @@ class AblationExperimentManager:
             except:
                 pass
 
+        # 域适应损失 - 注意：当前消融模型中大部分没有实现域适应
+        # 如果需要对比域适应的影响，需要在相应的消融模型中添加此功能
+        if 'domain_adaptation_loss' not in disabled_components and hasattr(model, 'compute_domain_adaptation_loss'):
+            try:
+                # 这里仅使用原始特征，不构建增强分支
+                if hasattr(model, 'fd') and model.fd is not None:
+                    batch_size = model.fd.size(0)
+                    domain_labels = torch.zeros(batch_size, dtype=torch.long, device=model.fd.device)
+                    domain_loss = model.compute_domain_adaptation_loss(model.fd, domain_labels)
+                    if domain_loss is not None and not torch.isnan(domain_loss):
+                        total_loss += loss_weights.get('domain_adapt', 0.0) * domain_loss
+            except:
+                pass
+
         return total_loss
 
     def _save_experiment_results(self, results):

@@ -1,0 +1,20 @@
+{"no_window_attention": {
+    "description": "禁用窗口注意力，使用全局注意力 - 测试窗口机制的必要性",
+    "disabled_components": ["window_attention"],
+    "model_type": "SGPDNet_NoWindowAttention",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.15
+    },
+    "expected_impact": "中等性能下降，计算复杂度增加",
+    "hypothesis": "窗口注意力提供更好的局部-全局信息平衡"
+  }
+}

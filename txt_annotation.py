@@ -12,7 +12,7 @@ if __name__ == "__main__":
     types_name      = os.listdir(datasets_path)
     types_name      = sorted(types_name)
 
-    list_file = open('paperdata-train.txt', 'w')
+    list_file = open('paperdata-train.txt', 'w', encoding='utf-8')
 # with open('cls_train-3.txt', 'w', encoding='utf-8') as list_file:
     for cls_id, type_name in enumerate(types_name):
         photos_path = os.path.join(datasets_path, type_name)

@@ -186,12 +186,12 @@ def get_dynamic_loss_weights(epoch, total_epochs, use_warmup_simple, losses_weig
     """
 
     # --- 可在此处调整阶段长度 ---
-    # 阶段1：只训练引导分支（Rec + LSC）。
-    # 这是为了解决VAE重建差的问题，强迫模型先学会重建。
-    stage1_epochs = 20
+    # 阶段1：主要训练引导分支，给Re-ID一个小权重避免突变
+    # 现在重建损失已修复，可以适当缩短此阶段
+    stage1_epochs = 10
 
     # 阶段2：淡入Re-ID损失，引导分支权重降低
-    stage2_epochs = 40
+    stage2_epochs = 30
     # --------------------------
 
     # losses_weights 包含了你设置的目标权重，例如：
@@ -201,7 +201,7 @@ def get_dynamic_loss_weights(epoch, total_epochs, use_warmup_simple, losses_weig
         # 阶段1：强制模型学习重建和一致性。
         print(f"Loss Strategy (Epoch {epoch + 1}): STAGE 1 - Guidance Pre-training")
         return {
-            'reid': 0.0,  # <- 最关键的修改：关闭 Re-ID 损失
+            'reid': 0.1,  # <- 给Re-ID一个小权重避免突变
             'rec': 1.0,  # 提高重建权重
             'lsc': 1.0,  # 提高一致性权重
             'g_disc': 0.0,  # 关闭其他辅助损失
@@ -216,8 +216,8 @@ def get_dynamic_loss_weights(epoch, total_epochs, use_warmup_simple, losses_weig
 
         print(f"Loss Strategy (Epoch {epoch + 1}): STAGE 2 - Fading in Re-ID (Factor: {smooth_factor:.3f})")
 
-        # Re-ID 损失从 0 缓慢增加到 1.0
-        reid_weight = smooth_factor
+        # Re-ID 损失从 0.1 缓慢增加到 1.0
+        reid_weight = 0.1 + (1.0 - 0.1) * smooth_factor
 
         # 引导损失从 1.0 缓慢降低到你设定的目标值
         rec_weight = 1.0 - (1.0 - losses_weights.get('rec', 0.3)) * smooth_factor
@@ -384,17 +384,17 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
                         center_loss = model_train.compute_center_loss(labels)
                         center_loss = torch.clamp(center_loss, max=2.0)
                     if losses_weights.get('domain_adapt', 0) > 0:
-                        with torch.no_grad():
-                            z0_aug_star, _ = model_train._perform_latent_inversion(images2)
-                            zs_aug = model_train.pdslrm(z0_aug_star)
-                            fg_aug = model_train.structure_feature_extractor(zs_aug)
-                            fd_aug = model_train.lightcnn(images2, fg=fg_aug, subject_mask=subject_masks)
+                        # 移除no_grad以允许梯度回传到增强分支
+                        z0_aug_star, _ = model_train._perform_latent_inversion(images2)
+                        zs_aug = model_train.pdslrm(z0_aug_star)
+                        fg_aug = model_train.structure_feature_extractor(zs_aug)
+                        fd_aug = model_train.lightcnn(images2, fg=fg_aug, subject_mask=subject_masks)
                         combined_features = torch.cat([model_train.fd, fd_aug], dim=0)
                         domain_labels = torch.cat([
                             torch.zeros(batch_samples, dtype=torch.long, device=device),
                             torch.ones(batch_samples, dtype=torch.long, device=device)
                         ])
-                        domain_adapt_loss = model_train.compute_domain_adaptation_loss(domain_labels)
+                        domain_adapt_loss = model_train.compute_domain_adaptation_loss(combined_features, domain_labels)
                         domain_adapt_loss = torch.clamp(domain_adapt_loss, max=2.0)
 
                     # === 关键修改 ===
@@ -442,17 +442,17 @@ def fit_one_epoch(model_train, optimizer, scheduler, epoch, epoch_step, gen_trai
                     center_loss = model_train.compute_center_loss(labels)
                     center_loss = torch.clamp(center_loss, max=2.0)
                 if losses_weights.get('domain_adapt', 0) > 0:
-                    with torch.no_grad():
-                        z0_aug_star, _ = model_train._perform_latent_inversion(images2)
-                        zs_aug = model_train.pdslrm(z0_aug_star)
-                        fg_aug = model_train.structure_feature_extractor(zs_aug)
-                        fd_aug = model_train.lightcnn(images2, fg=fg_aug, subject_mask=subject_masks)
+                    # 移除no_grad以允许梯度回传到增强分支
+                    z0_aug_star, _ = model_train._perform_latent_inversion(images2)
+                    zs_aug = model_train.pdslrm(z0_aug_star)
+                    fg_aug = model_train.structure_feature_extractor(zs_aug)
+                    fd_aug = model_train.lightcnn(images2, fg=fg_aug, subject_mask=subject_masks)
                     combined_features = torch.cat([model_train.fd, fd_aug], dim=0)
                     domain_labels = torch.cat([
                         torch.zeros(batch_samples, dtype=torch.long, device=device),
                         torch.ones(batch_samples, dtype=torch.long, device=device)
                     ])
-                    domain_adapt_loss = model_train.domain_adaptation_loss(combined_features, domain_labels)
+                    domain_adapt_loss = model_train.compute_domain_adaptation_loss(combined_features, domain_labels)
                     domain_adapt_loss = torch.clamp(domain_adapt_loss, max=2.0)
 
                 # === 关键修改 ===
@@ -825,7 +825,8 @@ if __name__ == "__main__":
 
     # 预热参数
     warmup_epochs = 10
-    warmup_steps = warmup_epochs * (get_num_classes(annotation_path) * (1 - 0.1) // batch_size)
+    # 注意：warmup_steps会在创建数据集后重新计算
+    warmup_steps = None  # 临时占位，稍后会用真实的epoch_step计算
     warmup_start_lr = Init_lr * 0.01
 
     # 学习率调度器
@@ -838,7 +839,7 @@ if __name__ == "__main__":
         'lsc': 0.8,  # 增加一致性损失权重
         'g_disc': 0.1,  # 减少判别损失权重
         'center': 0.03,  # 新增center loss权重
-        'domain_adapt': 0.15  # 新增域适应损失权重
+        'domain_adapt': 0.05  # 降低域适应损失权重，修复梯度流后重新调试
     }
 
     # 梯度裁剪阈值
@@ -884,7 +885,7 @@ if __name__ == "__main__":
     num_classes = get_num_classes(annotation_path)
     print(f"检测到 {num_classes} 个类别")
 
-    with open(annotation_path, "r", encoding='gbk') as f:
+    with open(annotation_path, "r", encoding='utf-8') as f:
         lines = f.readlines()
     np.random.seed(seed)
     np.random.shuffle(lines)
@@ -910,6 +911,10 @@ if __name__ == "__main__":
 
     epoch_step = max(1, len(train_dataset) // batch_size)
     epoch_step_val = max(1, len(val_dataset) // batch_size) if len(val_dataset) > 0 else 0
+    
+    # 使用真实的训练步数计算warmup_steps
+    warmup_steps = warmup_epochs * epoch_step
+    print(f"训练数据集大小: {len(train_dataset)}, 每轮步数: {epoch_step}, Warmup步数: {warmup_steps}")
 
     # --- 4. 模型初始化，添加窗口大小参数 ---
     model = SGPDNet(

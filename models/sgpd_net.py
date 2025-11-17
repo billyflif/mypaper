@@ -716,10 +716,10 @@ class SGPDNet(nn.Module):
         if torch.isnan(self.fd).any():
             print("NaN detected in feature fd")
 
-        # 计算重建图像
-        with torch.no_grad():
-            rec_latent_from_zs = self.zs / self.vae_scaling_factor
-            self.rec_img = self.vae.decode(rec_latent_from_zs).sample
+        # 计算重建图像 - 移除no_grad以允许梯度回传到zs和PDSLRM
+        # VAE参数已在__init__中设置为requires_grad=False，不会被更新
+        rec_latent_from_zs = self.zs / self.vae_scaling_factor
+        self.rec_img = self.vae.decode(rec_latent_from_zs).sample
 
         # 计算ArcFace logits
         output_logits = self.arcface_loss_calc(self.fd, label)
@@ -770,8 +770,6 @@ class SGPDNet(nn.Module):
             raise RuntimeError("Run forward(train) first.")
         return self.center_loss(self.fd, label)
 
-    def compute_domain_adaptation_loss(self, domain_labels):
-        """计算域适应损失"""
-        if self.fd is None:
-            raise RuntimeError("Run forward(train) first.")
-        return self.domain_adaptation_loss(self.fd, domain_labels)
+    def compute_domain_adaptation_loss(self, features, domain_labels):
+        """计算域适应损失 - 统一接口"""
+        return self.domain_adaptation_loss(features, domain_labels)

@@ -1,0 +1,19 @@
+{
+ "no_structure_guidance": {
+    "description": "禁用结构引导（PDSLRM + 结构特征提取器）- 测试生成分支的整体作用",
+    "disabled_components": ["pdslrm", "structure_feature_extractor"],
+    "model_type": "SGPDNet_NoStructureGuidance",
+    "model_params": {
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.0,
+      "lsc_weight": 0.0,
+      "g_disc_weight": 0.0,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "显著性能下降，退化为标准CNN",
+    "hypothesis": "生成分支提供的结构先验对识别性能至关重要"
+  }
+}

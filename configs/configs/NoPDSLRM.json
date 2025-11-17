@@ -1,0 +1,22 @@
+{
+  "no_pdslrm": {
+    "description": "禁用PDSLRM模块 - 测试潜变量精化的作用",
+    "disabled_components": [
+      "pdslrm"
+    ],
+    "model_type": "SGPDNet_NoPDSLRM",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "window_size": 4
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.0,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.15
+    }
+  }
+}

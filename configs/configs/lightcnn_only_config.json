@@ -1,0 +1,71 @@
+{
+  "simple_cnn_baseline": {
+    "description": "简单LightCNN基线（仅此一个实验）",
+    "disabled_components": ["all_generative_components"],
+    "model_type": "SimpleLightCNNBaseline",
+    "model_params": {
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.0,
+      "lsc_weight": 0.0,
+      "g_disc_weight": 0.0,
+      "center_weight": 0.0,
+      "domain_adapt_weight": 0.0
+    }
+  }
+}
+
+#其它的
+
+  "no_domain_adaptation": {
+    "description": "禁用域适应损失 - 测试域不变性学习的作用",
+    "disabled_components": ["domain_adaptation"],
+    "model_type": "SGPDNet",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "sub_centers_k": 2,
+      "arcface_s": 12,
+      "arcface_m": 0.15,
+      "latent_inversion_iters": 4,
+      "latent_inversion_lr": 0.1,
+      "window_size": 4
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "轻微到中等性能下降，域泛化能力降低",
+    "hypothesis": "域适应损失提高对不同数据增强的鲁棒性"
+  },
+
+  "ablation_groups": {
+    "core_components": ["baseline", "no_pdslrm", "no_sgclfa", "no_structure_guidance"],
+    "attention_mechanisms": ["no_window_attention", "no_cross_layer", "no_film"],
+    "loss_functions": ["no_reconstruction_loss", "no_lsc_loss", "no_auxiliary_loss", "no_center_loss", "no_domain_adaptation"],
+    "baselines": ["simple_cnn_baseline"]
+  },
+
+  "evaluation_metrics": [
+    "accuracy",
+    "top5_accuracy",
+    "precision",
+    "recall",
+    "f1_score",
+    "inference_time",
+    "model_parameters",
+    "training_time"
+  ],
+
+  "analysis_focus": {
+    "component_importance": "通过逐一禁用组件评估各部分的重要性",
+    "architectural_design": "验证生成-判别协同设计的有效性",
+    "attention_mechanisms": "比较不同注意力机制的贡献",
+    "loss_function_contribution": "分析各损失函数对性能的影响",
+    "computational_efficiency": "评估各组件的计算开销"
+  }

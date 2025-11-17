@@ -181,8 +181,8 @@ class SGPDNet_NoPDSLRM(nn.Module):
             self.fd = self.lightcnn(img1, fg=self.fg, subject_mask=subject_mask)
 
             if self.vae is not None:
-                with torch.no_grad():
-                    self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
+                # 移除no_grad以允许重建损失梯度回传
+                self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
             else:
                 self.rec_img = img1  # 虚拟重建
 
@@ -455,8 +455,8 @@ class SGPDNet_NoFiLM(nn.Module):
             self.fd = self.lightcnn(img1, fg=self.fg, subject_mask=subject_mask)
 
             if self.vae is not None:
-                with torch.no_grad():
-                    self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
+                # 移除no_grad以允许重建损失梯度回传
+                self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
             else:
                 self.rec_img = img1
 
@@ -641,8 +641,8 @@ class SGPDNet_NoSGCLFA(nn.Module):
 
             # 重建
             if self.vae is not None:
-                with torch.no_grad():
-                    self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
+                # 移除no_grad以允许重建损失梯度回传
+                self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
             else:
                 self.rec_img = img1
 
@@ -884,8 +884,8 @@ class SGPDNet_NoWindowAttention(nn.Module):
             self.fd = self.lightcnn(img1, fg=self.fg, subject_mask=subject_mask)
 
             if self.vae is not None:
-                with torch.no_grad():
-                    self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
+                # 移除no_grad以允许重建损失梯度回传
+                self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
             else:
                 self.rec_img = img1
 
@@ -1071,8 +1071,8 @@ class SGPDNet_NoCrossLayer(nn.Module):
             self.fd = self.lightcnn(img1, fg=self.fg, subject_mask=subject_mask)
 
             if self.vae is not None:
-                with torch.no_grad():
-                    self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
+                # 移除no_grad以允许重建损失梯度回传
+                self.rec_img = self.vae.decode(self.zs / self.vae_scaling_factor).sample
             else:
                 self.rec_img = img1
 
