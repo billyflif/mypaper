@@ -444,7 +444,7 @@ class FGDLossHead(nn.Module):
 class SGPDNet(nn.Module):
     def __init__(self, num_classes, latent_channels=4, structure_dim=256, lightcnn_embedding_dim=512,
                  pretrained=False, sub_centers_k=3, arcface_s=16.0, arcface_m=0.2,  # 降低参数
-                 latent_inversion_iters=50, latent_inversion_lr=0.05, window_size=7):
+                 latent_inversion_iters=30, latent_inversion_lr=0.01, window_size=7):
         super(SGPDNet, self).__init__()
         self.num_classes = num_classes
         self.K = sub_centers_k
@@ -530,7 +530,7 @@ class SGPDNet(nn.Module):
         self.fg = None
         self.fd = None
         self.zs = None
-        self.aug_zs = None
+        self.augmented_zs = None
         self.rec_img_from_z0 = None
 
         # === Latent Inversion Criterion ===
@@ -560,7 +560,7 @@ class SGPDNet(nn.Module):
     def _perform_latent_inversion(self, image_norm_minus_1_1):
         """执行潜变量反演"""
         device = image_norm_minus_1_1.device
-        # 1. 初始猜测
+        # 1. 初始猜测：使用VAE encoder输出的均值作为初始latent
         with torch.no_grad():
             latent_dist = self.vae.encode(image_norm_minus_1_1).latent_dist
             init_latent = latent_dist.mean * self.vae_scaling_factor
@@ -568,11 +568,14 @@ class SGPDNet(nn.Module):
 
         # 2. 设置可优化参数
         current_latent = init_latent.clone().requires_grad_(True)
-        # 3. 优化器 - 降低学习率提高稳定性
-        optimizer = torch.optim.Adam([current_latent], lr=self.latent_inversion_lr * 0.8)
-        # 4. 迭代优化
+        # 3. 优化器 - 使用类内配置的学习率
+        optimizer = torch.optim.Adam([current_latent], lr=self.latent_inversion_lr)
+        criterion = self.inversion_criterion
+
+        # 4. 迭代优化并保存最优latent，加入简单early stopping
         best_loss = float('inf')
         best_latent = init_latent.clone()
+        prev_loss = None
 
         decoder_param_requires_grad_state = {}
         for name, param in self.vae.decoder.named_parameters():
@@ -587,7 +590,7 @@ class SGPDNet(nn.Module):
                 optimizer.zero_grad()
                 latent_input = current_latent / self.vae_scaling_factor
                 reconstructed_image = self.vae.decode(latent_input).sample
-                loss = self.inversion_criterion(reconstructed_image, image_norm_minus_1_1)
+                loss = criterion(reconstructed_image, image_norm_minus_1_1)
                 loss.backward()
                 optimizer.step()
 
@@ -595,6 +598,10 @@ class SGPDNet(nn.Module):
                 if current_loss < best_loss:
                     best_loss = current_loss
                     best_latent = current_latent.detach().clone()
+
+                if prev_loss is not None and abs(prev_loss - current_loss) < 1e-6:
+                    break
+                prev_loss = current_loss
         finally:
             for name, param in self.vae.decoder.named_parameters():
                 if name in decoder_param_requires_grad_state:
@@ -758,10 +765,15 @@ class SGPDNet(nn.Module):
         return F.l1_loss(self.rec_img, orig_img)
 
     def compute_lsc_loss(self):
-        """计算潜变量一致性损失"""
+        """计算潜变量一致性损失（使用余弦相似度，避免尺度敏感）"""
         if self.zs is None or self.augmented_zs is None:
             raise RuntimeError("Run forward(train) first.")
-        lsc_loss = F.mse_loss(self.zs, self.augmented_zs)
+
+        zs_flat = self.zs.flatten(1)
+        augmented_zs_flat = self.augmented_zs.flatten(1)
+
+        cosine_sim = F.cosine_similarity(zs_flat, augmented_zs_flat, dim=1).mean()
+        lsc_loss = 1.0 - cosine_sim
         return lsc_loss
 
     def compute_center_loss(self, label):

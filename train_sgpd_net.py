@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--sam-checkpoint', type=str, default='sam_vit_h_4b8939.pth', help='SAM模型检查点路径')
     parser.add_argument('--sam-model-type', type=str, default='vit_h', help='SAM模型类型 (vit_h, vit_b, vit_l)')
     parser.add_argument('--disable-sam', action='store_true', help='禁用SAM模型，使用标准数据增强')
-    parser.add_argument('--window-size', type=int, default=4, help='窗口注意力的窗口大小')
+    parser.add_argument('--window-size', type=int, default=7, help='窗口注意力的窗口大小')
     # 修改参数解析器，添加SAM2配置路径
     parser.add_argument('--sam-model-cfg', type=str, default="E:\Mypaper2\conf\sam2.1_hiera_t.yaml",
                         help='SAM2模型配置文件路径')
@@ -658,7 +658,7 @@ def get_optimizer_grouped_parameters(model, base_lr, weight_decay):
         {'params': [p for n, p in model.named_parameters()
                     if any(fp in n for fp in film_params)],
          'weight_decay': weight_decay,
-         'lr': base_lr * 1.5}  # 动态调制参数需要更快的学习
+         'lr': base_lr * 1.2}  # 动态调制参数使用略高学习率但不过于激进
     ]
 
     return optimizer_grouped_parameters
@@ -794,8 +794,8 @@ if __name__ == "__main__":
     lightcnn_embedding_dim = 512
 
     # Latent Inversion 参数
-    latent_inversion_iters = 4
-    latent_inversion_lr = 0.1
+    latent_inversion_iters = 30
+    latent_inversion_lr = 0.01
 
     # 训练参数
     batch_size = 16

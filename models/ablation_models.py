@@ -12,6 +12,61 @@ from models.sgpd_net import (
 )
 
 
+def perform_latent_inversion(vae, image_norm_minus_1_1, vae_scaling_factor,
+                             num_iters=30, lr=0.01):
+    """通用潜变量反演函数：与主模型保持一致的迭代反演过程"""
+    device = image_norm_minus_1_1.device
+    with torch.no_grad():
+        latent_dist = vae.encode(image_norm_minus_1_1).latent_dist
+        init_latent = latent_dist.mean * vae_scaling_factor
+        init_latent = init_latent.detach()
+
+    current_latent = init_latent.clone().requires_grad_(True)
+    optimizer = torch.optim.Adam([current_latent], lr=lr)
+    criterion = nn.MSELoss(reduction='mean')
+
+    best_loss = float('inf')
+    best_latent = init_latent.clone()
+    prev_loss = None
+
+    decoder_param_requires_grad_state = {}
+    for name, param in vae.decoder.named_parameters():
+        decoder_param_requires_grad_state[name] = param.requires_grad
+        param.requires_grad = False
+
+    original_grad_enabled = torch.is_grad_enabled()
+    torch.set_grad_enabled(True)
+
+    try:
+        for i in range(num_iters):
+            optimizer.zero_grad()
+            latent_input = current_latent / vae_scaling_factor
+            reconstructed_image = vae.decode(latent_input).sample
+            loss = criterion(reconstructed_image, image_norm_minus_1_1)
+            loss.backward()
+            optimizer.step()
+
+            current_loss = loss.item()
+            if current_loss < best_loss:
+                best_loss = current_loss
+                best_latent = current_latent.detach().clone()
+
+            if prev_loss is not None and abs(prev_loss - current_loss) < 1e-6:
+                break
+            prev_loss = current_loss
+    finally:
+        for name, param in vae.decoder.named_parameters():
+            if name in decoder_param_requires_grad_state:
+                param.requires_grad = decoder_param_requires_grad_state[name]
+        torch.set_grad_enabled(original_grad_enabled)
+
+    with torch.no_grad():
+        best_latent_input = best_latent / vae_scaling_factor
+        inversion_reconstructed_image = vae.decode(best_latent_input).sample
+
+    return best_latent, inversion_reconstructed_image
+
+
 class SGPDNet_NoPDSLRM(nn.Module):
     """消融实验: 禁用PDSLRM模块"""
 
@@ -160,17 +215,21 @@ class SGPDNet_NoPDSLRM(nn.Module):
                                                                                        subject_mask)
 
     def _perform_latent_inversion(self, image_norm_minus_1_1):
-        """简化的潜变量反演"""
+        """潜变量反演：与主模型保持一致的迭代反演"""
         if self.vae is None:
             # 如果没有VAE，返回虚拟潜变量
             B, C, H, W = image_norm_minus_1_1.shape
             z0 = torch.randn(B, 4, H // 8, W // 8, device=image_norm_minus_1_1.device)
             return z0, None
 
-        with torch.no_grad():
-            latent_dist = self.vae.encode(image_norm_minus_1_1).latent_dist
-            z0 = latent_dist.mean * self.vae_scaling_factor
-        return z0, None
+        z0, rec = perform_latent_inversion(
+            self.vae,
+            image_norm_minus_1_1,
+            self.vae_scaling_factor,
+            num_iters=30,
+            lr=0.01
+        )
+        return z0, rec
 
     def forward(self, img1, img2=None, subject_mask=None, label=None, mode="train"):
         if mode == "train":
@@ -436,16 +495,20 @@ class SGPDNet_NoFiLM(nn.Module):
                                                                                        subject_mask)
 
     def _perform_latent_inversion(self, image_norm_minus_1_1):
-        """简化的潜变量反演"""
+        """潜变量反演：与主模型保持一致的迭代反演"""
         if self.vae is None:
             B, C, H, W = image_norm_minus_1_1.shape
             z0 = torch.randn(B, 4, H // 8, W // 8, device=image_norm_minus_1_1.device)
             return z0, None
 
-        with torch.no_grad():
-            latent_dist = self.vae.encode(image_norm_minus_1_1).latent_dist
-            z0 = latent_dist.mean * self.vae_scaling_factor
-        return z0, None
+        z0, rec = perform_latent_inversion(
+            self.vae,
+            image_norm_minus_1_1,
+            self.vae_scaling_factor,
+            num_iters=30,
+            lr=0.01
+        )
+        return z0, rec
 
     def forward(self, img1, img2=None, subject_mask=None, label=None, mode="train"):
         if mode == "train":

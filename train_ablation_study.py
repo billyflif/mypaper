@@ -370,9 +370,9 @@ class AblationExperimentManager:
                 sub_centers_k=2,
                 arcface_s=12,
                 arcface_m=0.15,
-                latent_inversion_iters=4,
-                latent_inversion_lr=0.1,
-                window_size=4
+                latent_inversion_iters=30,
+                latent_inversion_lr=0.01,
+                window_size=7
             )
         elif model_type == 'SGPDNet_NoPDSLRM':
             model = SGPDNet_NoPDSLRM(num_classes=num_classes)
@@ -408,7 +408,7 @@ class AblationExperimentManager:
             'lsc': 0.8,
             'g_disc': 0.1,
             'center': 0.03,
-            'domain_adapt': 0.15
+            'domain_adapt': 0.0
         }
 
         # 从实验配置中覆盖权重
