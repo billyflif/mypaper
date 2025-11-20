@@ -549,17 +549,27 @@ class AblationExperimentManager:
                 model_type = type(model).__name__
 
                 if model_type == 'SimpleLightCNNBaseline':
-                    # 简单基线模型
-                    logits = model(images1, labels=labels)
+                    # 简单基线模型，直接传入图像
+                    logits = model(images1)
+                elif model_type == 'SGPDNet':
+                    # 完整SGPD模型
+                    logits = model(images1, images2, subject_masks, labels, mode="train")
                 elif model_type in ['SGPDNet_NoStructureGuidance']:
                     # 无结构引导的模型
                     logits = model(images1, img2=images2, subject_mask=subject_masks, label=labels, mode="train")
-                elif hasattr(model, 'forward') and 'SGPD' in model_type:
-                    # 其他SGPD系列模型
-                    logits = model(images1, img2=images2, subject_mask=subject_masks, label=labels, mode="train")
                 else:
-                    # 完整SGPD模型
-                    logits = model(images1, images2, subject_masks, labels, mode="train")
+                    # 其他SGPD系列消融模型
+                    # 尝试标准SGPD调用方式
+                    try:
+                        logits = model(images1, img2=images2, subject_mask=subject_masks, label=labels, mode="train")
+                    except TypeError as te:
+                        # 如果上述调用失败，尝试简化的调用方式
+                        print(f"调用失败，尝试简化调用: {te}")
+                        try:
+                            logits = model(images1, subject_mask=subject_masks, label=labels, mode="train")
+                        except TypeError:
+                            # 最后的尝试：只传入图像
+                            logits = model(images1)
 
                 # 检查logits是否为None
                 if logits is None:
@@ -647,6 +657,7 @@ class AblationExperimentManager:
 
                 images1, images2, subject_masks, labels = batch_data
                 images1 = images1.to(self.device)
+                images2 = images2.to(self.device)
                 subject_masks = subject_masks.to(self.device)
                 labels = labels.to(self.device)
 
@@ -655,17 +666,26 @@ class AblationExperimentManager:
                     model_type = type(model).__name__
 
                     if model_type == 'SimpleLightCNNBaseline':
-                        logits = model(images1, labels=labels)
+                        # 简单基线模型，直接传入图像
+                        logits = model(images1)
+                    elif model_type == 'SGPDNet':
+                        # 完整SGPD模型
+                        logits = model(images1, images2, subject_masks, labels, mode="eval_logits")
                     elif model_type in ['SGPDNet_NoStructureGuidance']:
-                        logits = model(images1, subject_mask=subject_masks, label=labels, mode="eval_logits")
-                    elif hasattr(model, 'forward') and hasattr(model, 'mode'):
-                        logits = model(images1, subject_mask=subject_masks, label=labels, mode="eval_logits")
+                        # 无结构引导的模型
+                        logits = model(images1, img2=images2, subject_mask=subject_masks, label=labels, mode="eval_logits")
                     else:
-                        # 尝试标准调用
+                        # 其他SGPD系列消融模型
+                        # 尝试标准SGPD调用方式
                         try:
-                            logits = model(images1, subject_mask=subject_masks, label=labels, mode="eval_logits")
-                        except:
-                            logits = model(images1, labels=labels)
+                            logits = model(images1, img2=images2, subject_mask=subject_masks, label=labels, mode="eval_logits")
+                        except TypeError:
+                            # 如果上述调用失败，尝试简化的调用方式
+                            try:
+                                logits = model(images1, subject_mask=subject_masks, label=labels, mode="eval_logits")
+                            except TypeError:
+                                # 最后的尝试：只传入图像
+                                logits = model(images1)
 
                     if logits is None:
                         continue
@@ -685,6 +705,8 @@ class AblationExperimentManager:
 
                 except Exception as e:
                     print(f"验证批次出错: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
 
             pbar.close()
