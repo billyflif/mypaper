@@ -15,6 +15,74 @@ import argparse
 import json
 from datetime import datetime
 
+# 早停机制类
+class EarlyStopping:
+    """早停机制，当验证指标不再改善时提前停止训练"""
+    def __init__(self, patience=10, min_delta=0.0001, mode='max', verbose=True):
+        """
+        Args:
+            patience: 容忍多少个epoch没有改善
+            min_delta: 最小改善量，小于这个值不算改善
+            mode: 'max'表示指标越大越好(如准确率)，'min'表示越小越好(如损失)
+            verbose: 是否打印早停信息
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.verbose = verbose
+
+        self.counter = 0
+        self.best_value = None
+        self.early_stop = False
+        self.best_epoch = 0
+
+    def __call__(self, current_value, epoch):
+        """
+        检查是否应该早停
+        Returns:
+            bool: 是否应该早停
+        """
+        if self.best_value is None:
+            # 第一次调用
+            self.best_value = current_value
+            self.best_epoch = epoch
+            return False
+
+        # 判断是否改善
+        if self.mode == 'max':
+            improved = (current_value - self.best_value) > self.min_delta
+        else:
+            improved = (self.best_value - current_value) > self.min_delta
+
+        if improved:
+            # 有改善，更新最佳值并重置计数器
+            if self.verbose:
+                print(f"验证指标改善: {self.best_value:.4f} -> {current_value:.4f}")
+            self.best_value = current_value
+            self.best_epoch = epoch
+            self.counter = 0
+        else:
+            # 无改善，增加计数器
+            self.counter += 1
+            if self.verbose:
+                print(f"验证指标未改善，早停计数: {self.counter}/{self.patience}")
+
+            if self.counter >= self.patience:
+                if self.verbose:
+                    print(f"\n早停触发！已连续 {self.patience} 个epoch无改善")
+                    print(f"最佳epoch: {self.best_epoch}, 最佳指标: {self.best_value:.4f}")
+                self.early_stop = True
+                return True
+
+        return False
+
+    def reset(self):
+        """重置早停状态"""
+        self.counter = 0
+        self.best_value = None
+        self.early_stop = False
+        self.best_epoch = 0
+
 # 导入原始模块
 from models.sgpd_net import SGPDNet
 from models.ablation_models import *  # 我们将创建的消融模型
@@ -53,6 +121,14 @@ def parse_args():
     parser.add_argument('--run-all', action='store_true', help='运行所有预定义的消融实验', default=True)
     parser.add_argument('--resume', type=str, default='', help='恢复训练的检查点路径')
     parser.add_argument('--save-freq', type=int, default=10, help='模型保存频率')
+
+    # 早停参数
+    parser.add_argument('--early-stopping', action='store_true', default=True,
+                        help='启用早停机制（默认启用）')
+    parser.add_argument('--patience', type=int, default=15,
+                        help='早停耐心值，连续多少个epoch无改善则停止（默认15）')
+    parser.add_argument('--min-delta', type=float, default=0.0001,
+                        help='最小改善阈值，小于此值不算改善（默认0.0001）')
 
     return parser.parse_args()
 
@@ -215,6 +291,19 @@ class AblationExperimentManager:
         # 初始化记录器
         loss_history = LossHistory(exp_save_dir, model, [128, 128])
 
+        # 初始化早停器
+        early_stopping = None
+        if self.args.early_stopping:
+            early_stopping = EarlyStopping(
+                patience=self.args.patience,
+                min_delta=self.args.min_delta,
+                mode='max',  # 监控验证准确率，越大越好
+                verbose=True
+            )
+            print(f"早停机制已启用 - 耐心值: {self.args.patience}, 最小改善阈值: {self.args.min_delta}")
+        else:
+            print("早停机制未启用，将训练全部epoch")
+
         # 训练循环
         best_val_acc = 0.0
         best_metrics = {}
@@ -264,7 +353,17 @@ class AblationExperimentManager:
                   f"Val Acc: {val_metrics['val_acc']:.4f}, "
                   f"Best Val Acc: {best_val_acc:.4f}")
 
+            # 早停检查
+            if early_stopping is not None:
+                if early_stopping(val_metrics['val_acc'], epoch):
+                    print(f"\n早停触发！训练在第 {epoch + 1} 轮停止")
+                    print(f"最佳模型在第 {early_stopping.best_epoch + 1} 轮，验证准确率: {early_stopping.best_value:.4f}")
+                    break
+
         loss_history.close_writer()
+
+        # 计算实际训练的epoch数
+        actual_epochs = epoch + 1  # epoch是0-based的
 
         # 保存实验结果
         exp_result = {
@@ -275,7 +374,10 @@ class AblationExperimentManager:
             'best_metrics': best_metrics,
             'total_params': total_params,
             'trainable_params': trainable_params,
-            'epochs_trained': self.args.epochs
+            'total_epochs': self.args.epochs,  # 计划的总epoch数
+            'actual_epochs': actual_epochs,  # 实际训练的epoch数
+            'early_stopped': early_stopping.early_stop if early_stopping is not None else False,
+            'best_epoch': early_stopping.best_epoch + 1 if early_stopping is not None else actual_epochs
         }
 
         result_file = os.path.join(exp_save_dir, 'experiment_result.json')
