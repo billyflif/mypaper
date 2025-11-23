@@ -119,6 +119,7 @@ def parse_args():
 
     # 实验控制
     parser.add_argument('--run-all', action='store_true', help='运行所有预定义的消融实验', default=True)
+    parser.add_argument('--skip-baseline', action='store_true', help='跳过完整的基线模型（baseline）')
     parser.add_argument('--resume', type=str, default='', help='恢复训练的检查点路径')
     parser.add_argument('--save-freq', type=int, default=10, help='模型保存频率')
 
@@ -234,6 +235,13 @@ class AblationExperimentManager:
         results = {}
 
         for exp_name, exp_config in self.experiments.items():
+            # 如果设置了跳过基线，则跳过baseline实验
+            if self.args.skip_baseline and exp_name == 'baseline':
+                print(f"\n{'=' * 60}")
+                print(f"跳过实验: {exp_name} (--skip-baseline 已启用)")
+                print(f"{'=' * 60}")
+                continue
+
             print(f"\n{'=' * 60}")
             print(f"开始消融实验: {exp_name}")
             print(f"描述: {exp_config['description']}")
