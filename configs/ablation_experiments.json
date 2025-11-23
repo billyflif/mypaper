@@ -1,0 +1,270 @@
+{
+  "baseline": {
+    "description": "完整SGPD-Net模型（基线）",
+    "disabled_components": [],
+    "model_type": "SGPDNet",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "sub_centers_k": 2,
+      "arcface_s": 12,
+      "arcface_m": 0.15,
+      "latent_inversion_iters": 30,
+      "latent_inversion_lr": 0.01,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "基准性能",
+    "hypothesis": "完整模型应该达到最佳性能"
+  },
+
+  "no_pdslrm": {
+    "description": "禁用PDSLRM模块 - 测试潜变量精化的作用",
+    "disabled_components": ["pdslrm"],
+    "model_type": "SGPDNet_NoPDSLRM",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.0,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "性能下降，因为缺少潜变量精化",
+    "hypothesis": "PDSLRM对于提高潜变量质量和最终识别性能至关重要"
+  },
+
+  "no_sgclfa": {
+    "description": "禁用SGCLFA注意力机制 - 测试结构引导注意力的作用",
+    "disabled_components": ["sgclfa"],
+    "model_type": "SGPDNet_NoSGCLFA",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "显著性能下降，无法有效融合生成和判别信息",
+    "hypothesis": "SGCLFA是连接生成和判别分支的关键组件"
+  },
+
+  "no_window_attention": {
+    "description": "禁用窗口注意力，使用全局注意力 - 测试窗口机制的必要性",
+    "disabled_components": ["window_attention"],
+    "model_type": "SGPDNet_NoWindowAttention",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "中等性能下降，计算复杂度增加",
+    "hypothesis": "窗口注意力提供更好的局部-全局信息平衡"
+  },
+
+  "no_cross_layer": {
+    "description": "禁用跨层聚合 - 测试多尺度特征融合的作用",
+    "disabled_components": ["cross_layer"],
+    "model_type": "SGPDNet_NoCrossLayer",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "轻微到中等性能下降",
+    "hypothesis": "跨层聚合帮助捕获多尺度判别特征"
+  },
+
+  "no_film": {
+    "description": "禁用FiLM参数生成器 - 测试动态调制的作用",
+    "disabled_components": ["film"],
+    "model_type": "SGPDNet_NoFiLM",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "中等性能下降，适应性降低",
+    "hypothesis": "FiLM调制使模型能够根据结构特征动态调整特征"
+  },
+
+  "no_structure_guidance": {
+    "description": "禁用结构引导（PDSLRM + 结构特征提取器）- 测试生成分支的整体作用",
+    "disabled_components": ["pdslrm", "structure_feature_extractor"],
+    "model_type": "SGPDNet_NoStructureGuidance",
+    "model_params": {
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.0,
+      "lsc_weight": 0.0,
+      "g_disc_weight": 0.0,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "显著性能下降，退化为标准CNN",
+    "hypothesis": "生成分支提供的结构先验对识别性能至关重要"
+  },
+
+  "simple_cnn_baseline": {
+    "description": "简单CNN基线（仅LightCNN + 标准分类损失）",
+    "disabled_components": ["all_generative_components"],
+    "model_type": "SimpleLightCNNBaseline",
+    "model_params": {
+      "lightcnn_embedding_dim": 512
+    },
+    "loss_config": {
+      "rec_weight": 0.0,
+      "lsc_weight": 0.0,
+      "g_disc_weight": 0.0,
+      "center_weight": 0.0,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "作为纯判别基线",
+    "hypothesis": "验证生成-判别融合框架的优越性"
+  },
+
+  "no_reconstruction_loss": {
+    "description": "禁用重建损失 - 测试重建约束的必要性",
+    "disabled_components": ["reconstruction_loss"],
+    "model_type": "SGPDNet",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "sub_centers_k": 2,
+      "arcface_s": 12,
+      "arcface_m": 0.15,
+      "latent_inversion_iters": 30,
+      "latent_inversion_lr": 0.01,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.0,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "轻微性能下降，生成质量降低",
+    "hypothesis": "重建损失确保生成分支学习有意义的表示"
+  },
+
+  "no_lsc_loss": {
+    "description": "禁用潜在一致性损失 - 测试一致性约束的作用",
+    "disabled_components": ["lsc_loss"],
+    "model_type": "SGPDNet",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "sub_centers_k": 2,
+      "arcface_s": 12,
+      "arcface_m": 0.15,
+      "latent_inversion_iters": 30,
+      "latent_inversion_lr": 0.01,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.0,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "轻微到中等性能下降，泛化能力降低",
+    "hypothesis": "LSC损失提高模型对数据增强的鲁棒性"
+  },
+
+  "no_auxiliary_loss": {
+    "description": "禁用辅助判别损失 - 测试结构特征监督的作用",
+    "disabled_components": ["auxiliary_loss"],
+    "model_type": "SGPDNet",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "sub_centers_k": 2,
+      "arcface_s": 12,
+      "arcface_m": 0.15,
+      "latent_inversion_iters": 30,
+      "latent_inversion_lr": 0.01,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.0,
+      "center_weight": 0.03,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "轻微性能下降",
+    "hypothesis": "辅助损失帮助结构特征学习判别信息"
+  },
+
+  "no_center_loss": {
+    "description": "禁用Center Loss - 测试类内紧凑性约束的作用",
+    "disabled_components": ["center_loss"],
+    "model_type": "SGPDNet",
+    "model_params": {
+      "latent_channels": 4,
+      "structure_dim": 256,
+      "lightcnn_embedding_dim": 512,
+      "sub_centers_k": 2,
+      "arcface_s": 12,
+      "arcface_m": 0.15,
+      "latent_inversion_iters": 30,
+      "latent_inversion_lr": 0.01,
+      "window_size": 7
+    },
+    "loss_config": {
+      "rec_weight": 0.3,
+      "lsc_weight": 0.8,
+      "g_disc_weight": 0.1,
+      "center_weight": 0.0,
+      "domain_adapt_weight": 0.0
+    },
+    "expected_impact": "轻微性能下降，类内变化增大",
+    "hypothesis": "Center Loss改善特征的类内紧凑性"
+  }
+}

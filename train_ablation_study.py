@@ -96,9 +96,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='SGPD-Net消融实验')
 
     # 基本参数
-    parser.add_argument('--experiment-name', type=str, default='no_window_attention',
+    parser.add_argument('--experiment-name', type=str, default='ablation_study',
                         help='实验名称（用于保存目录）')
-    parser.add_argument('--config', type=str, default='configs/no_window_attention.json',
+    parser.add_argument('--config', type=str, default='configs/ablation_experiments.json',
                         help='消融实验配置文件')
     parser.add_argument('--data-path', type=str, default='paperdata-train.txt',
                         help='数据标注文件路径')
@@ -466,38 +466,90 @@ class AblationExperimentManager:
         return train_loader, val_loader, num_classes
 
     def _create_ablation_model(self, exp_config, num_classes):
-        """创建消融模型"""
+        """创建消融模型 - 支持从配置文件读取模型参数"""
         model_type = exp_config.get('model_type', 'SGPDNet')
+        model_params = exp_config.get('model_params', {})
+
+        # 默认参数
+        default_params = {
+            'latent_channels': 4,
+            'structure_dim': 256,
+            'lightcnn_embedding_dim': 512,
+            'sub_centers_k': 2,
+            'arcface_s': 12,
+            'arcface_m': 0.15,
+            'latent_inversion_iters': 30,
+            'latent_inversion_lr': 0.01,
+            'window_size': 7
+        }
+
+        # 用配置文件中的参数覆盖默认参数
+        for key, value in model_params.items():
+            default_params[key] = value
 
         if model_type == 'SGPDNet':
             # 完整模型
             model = SGPDNet(
                 num_classes=num_classes,
-                latent_channels=4,
-                structure_dim=256,
-                lightcnn_embedding_dim=512,
+                latent_channels=default_params['latent_channels'],
+                structure_dim=default_params['structure_dim'],
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim'],
                 pretrained=False,
-                sub_centers_k=2,
-                arcface_s=12,
-                arcface_m=0.15,
-                latent_inversion_iters=30,
-                latent_inversion_lr=0.01,
-                window_size=7
+                sub_centers_k=default_params['sub_centers_k'],
+                arcface_s=default_params['arcface_s'],
+                arcface_m=default_params['arcface_m'],
+                latent_inversion_iters=default_params['latent_inversion_iters'],
+                latent_inversion_lr=default_params['latent_inversion_lr'],
+                window_size=default_params['window_size']
             )
         elif model_type == 'SGPDNet_NoPDSLRM':
-            model = SGPDNet_NoPDSLRM(num_classes=num_classes)
+            model = SGPDNet_NoPDSLRM(
+                num_classes=num_classes,
+                latent_channels=default_params['latent_channels'],
+                structure_dim=default_params['structure_dim'],
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim'],
+                window_size=default_params['window_size']
+            )
         elif model_type == 'SGPDNet_NoSGCLFA':
-            model = SGPDNet_NoSGCLFA(num_classes=num_classes)
+            model = SGPDNet_NoSGCLFA(
+                num_classes=num_classes,
+                latent_channels=default_params['latent_channels'],
+                structure_dim=default_params['structure_dim'],
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim']
+            )
         elif model_type == 'SGPDNet_NoWindowAttention':
-            model = SGPDNet_NoWindowAttention(num_classes=num_classes)
+            model = SGPDNet_NoWindowAttention(
+                num_classes=num_classes,
+                latent_channels=default_params['latent_channels'],
+                structure_dim=default_params['structure_dim'],
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim']
+            )
         elif model_type == 'SGPDNet_NoCrossLayer':
-            model = SGPDNet_NoCrossLayer(num_classes=num_classes)
+            model = SGPDNet_NoCrossLayer(
+                num_classes=num_classes,
+                latent_channels=default_params['latent_channels'],
+                structure_dim=default_params['structure_dim'],
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim'],
+                window_size=default_params['window_size']
+            )
         elif model_type == 'SGPDNet_NoFiLM':
-            model = SGPDNet_NoFiLM(num_classes=num_classes)
+            model = SGPDNet_NoFiLM(
+                num_classes=num_classes,
+                latent_channels=default_params['latent_channels'],
+                structure_dim=default_params['structure_dim'],
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim'],
+                window_size=default_params['window_size']
+            )
         elif model_type == 'SGPDNet_NoStructureGuidance':
-            model = SGPDNet_NoStructureGuidance(num_classes=num_classes)
+            model = SGPDNet_NoStructureGuidance(
+                num_classes=num_classes,
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim']
+            )
         elif model_type == 'SimpleLightCNNBaseline':
-            model = SimpleLightCNNBaseline(num_classes=num_classes)
+            model = SimpleLightCNNBaseline(
+                num_classes=num_classes,
+                lightcnn_embedding_dim=default_params['lightcnn_embedding_dim']
+            )
         else:
             raise ValueError(f"未知的模型类型: {model_type}")
 
