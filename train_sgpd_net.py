@@ -19,7 +19,12 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 # Import project modules
 from models.sgpd_net import SGPDNet, PDSLRM, StructureFeatureExtractor, SGCLFA, FGDLossHead
 from utils.dataloader_sgpd import SGPDDataset, sgpd_dataset_collate
-from utils.ch4_protocol import compute_macro_f1, compute_topk_accuracies, rewrite_annotation_lines
+from utils.ch4_protocol import (
+    compute_checkpoint_score,
+    compute_macro_f1,
+    compute_topk_accuracies,
+    rewrite_annotation_lines,
+)
 from utils.callback import LossHistory
 from utils.utils import get_num_classes, seed_everything, show_config, worker_init_fn, get_lr
 
@@ -184,12 +189,6 @@ def build_weighted_sampler(labels):
         label_counts[label] = label_counts.get(label, 0) + 1
     sample_weights = [1.0 / label_counts[label] for label in labels]
     return WeightedRandomSampler(torch.DoubleTensor(sample_weights), num_samples=len(sample_weights), replacement=True)
-
-
-def compute_checkpoint_score(metrics):
-    val_top1 = metrics.get('val_top1', metrics.get('val_acc', 0.0))
-    val_macro_f1 = metrics.get('val_macro_f1', 0.0)
-    return 0.6 * val_top1 + 0.4 * val_macro_f1
 
 
 

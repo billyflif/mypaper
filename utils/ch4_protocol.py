@@ -181,6 +181,12 @@ def compute_macro_f1(predictions, labels, num_classes=None):
     return float(np.mean(f1_values)) if f1_values else 0.0
 
 
+def compute_checkpoint_score(metrics):
+    val_top1 = metrics.get("val_top1", metrics.get("val_acc", 0.0))
+    val_macro_f1 = metrics.get("val_macro_f1", 0.0)
+    return 0.6 * val_top1 + 0.4 * val_macro_f1
+
+
 def count_parameters(model):
     total_params = sum(param.numel() for param in model.parameters())
     trainable_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
