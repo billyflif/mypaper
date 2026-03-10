@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from diffusers import AutoencoderKL
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from functools import partial
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,6 +19,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 # Import project modules
 from models.sgpd_net import SGPDNet, PDSLRM, StructureFeatureExtractor, SGCLFA, FGDLossHead
 from utils.dataloader_sgpd import SGPDDataset, sgpd_dataset_collate
+from utils.ch4_protocol import compute_macro_f1, compute_topk_accuracies, rewrite_annotation_lines
 from utils.callback import LossHistory
 from utils.utils import get_num_classes, seed_everything, show_config, worker_init_fn, get_lr
 
@@ -36,9 +37,11 @@ def parse_args():
     parser.add_argument('--sam-checkpoint', type=str, default='sam_vit_h_4b8939.pth', help='SAM模型检查点路径')
     parser.add_argument('--sam-model-type', type=str, default='vit_h', help='SAM模型类型 (vit_h, vit_b, vit_l)')
     parser.add_argument('--disable-sam', action='store_true', help='禁用SAM模型，使用标准数据增强')
+    parser.add_argument('--thesis-tuned', action='store_true', help='启用第四章定稿预设')
+    parser.add_argument('--dataset-root', type=str, default='', help='用于重写标注文件中图像路径的本地数据根目录')
     parser.add_argument('--window-size', type=int, default=7, help='窗口注意力的窗口大小')
     # 修改参数解析器，添加SAM2配置路径
-    parser.add_argument('--sam-model-cfg', type=str, default="E:\Mypaper2\conf\sam2.1_hiera_t.yaml",
+    parser.add_argument('--sam-model-cfg', type=str, default=r"E:\Mypaper2\conf\sam2.1_hiera_t.yaml",
                         help='SAM2模型配置文件路径')
     return parser.parse_args()
 
@@ -175,8 +178,58 @@ def get_warmup_lr(current_step, warmup_steps, base_lr, warmup_start_lr):
         return base_lr
 
 
+def build_weighted_sampler(labels):
+    label_counts = {}
+    for label in labels:
+        label_counts[label] = label_counts.get(label, 0) + 1
+    sample_weights = [1.0 / label_counts[label] for label in labels]
+    return WeightedRandomSampler(torch.DoubleTensor(sample_weights), num_samples=len(sample_weights), replacement=True)
 
-def get_dynamic_loss_weights(epoch, total_epochs, use_warmup_simple, losses_weights):
+
+def compute_checkpoint_score(metrics):
+    val_top1 = metrics.get('val_top1', metrics.get('val_acc', 0.0))
+    val_macro_f1 = metrics.get('val_macro_f1', 0.0)
+    return 0.6 * val_top1 + 0.4 * val_macro_f1
+
+
+
+def get_dynamic_loss_weights(epoch, total_epochs, use_warmup_simple, losses_weights, thesis_tuned=False):
+    if thesis_tuned:
+        warm_epochs = 5
+        transition_end = 20
+        warmup_weights = {
+            'reid': 0.6,
+            'rec': 0.2,
+            'lsc': 0.0,
+            'g_disc': 0.0,
+            'center': 0.0,
+            'domain_adapt': 0.0
+        }
+        final_weights = {
+            'reid': 1.0,
+            'rec': losses_weights.get('rec', 0.15),
+            'lsc': losses_weights.get('lsc', 0.10),
+            'g_disc': losses_weights.get('g_disc', 0.10),
+            'center': losses_weights.get('center', 0.02),
+            'domain_adapt': losses_weights.get('domain_adapt', 0.0)
+        }
+
+        if epoch < warm_epochs:
+            print(f"Loss Strategy (Epoch {epoch + 1}): THESIS-TUNED WARMUP")
+            return warmup_weights
+
+        if epoch < transition_end:
+            progress = (epoch - warm_epochs + 1) / max(transition_end - warm_epochs, 1)
+            smooth_factor = 0.5 * (1 - math.cos(math.pi * progress))
+            print(f"Loss Strategy (Epoch {epoch + 1}): THESIS-TUNED TRANSITION (Factor: {smooth_factor:.3f})")
+            blended = {}
+            for key, warm_value in warmup_weights.items():
+                blended[key] = warm_value + (final_weights[key] - warm_value) * smooth_factor
+            return blended
+
+        print(f"Loss Strategy (Epoch {epoch + 1}): THESIS-TUNED FULL")
+        return final_weights
+
     """
     动态调整损失权重 - 修复版本 (解决假设1)
     采用课程学习策略：
@@ -554,6 +607,9 @@ def eval_one_epoch(model_eval, epoch, epoch_step_val, gen_val, device):
     val_total_loss_epoch = 0.0
     val_correct_predictions = 0
     val_total_samples = 0
+    all_preds = []
+    all_labels = []
+    top5_correct = 0.0
 
     model_eval.eval()
     pbar = tqdm(total=epoch_step_val, desc=f'Epoch {epoch + 1} Val', postfix=dict, mininterval=0.3)
@@ -583,6 +639,10 @@ def eval_one_epoch(model_eval, epoch, epoch_step_val, gen_val, device):
 
                 preds = torch.argmax(F.softmax(reid_logits, dim=-1), dim=-1)
                 val_correct_predictions += (preds == labels).sum().item()
+                topk_result = compute_topk_accuracies(reid_logits, labels, topk=(1, 5))
+                top5_correct += topk_result[5] * batch_samples
+                all_preds.extend(preds.cpu().tolist())
+                all_labels.extend(labels.cpu().tolist())
 
             except Exception as e:
                 print(f"\nError val iter {iteration + 1}: {e}")
@@ -593,6 +653,7 @@ def eval_one_epoch(model_eval, epoch, epoch_step_val, gen_val, device):
             pbar.set_postfix(**{
                 'val_loss': val_total_loss_epoch / val_total_samples if val_total_samples else 0,
                 'val_acc': val_correct_predictions / val_total_samples if val_total_samples else 0,
+                'val_top5': top5_correct / val_total_samples if val_total_samples else 0,
             })
             pbar.update(1)
 
@@ -600,11 +661,23 @@ def eval_one_epoch(model_eval, epoch, epoch_step_val, gen_val, device):
 
     avg_val_loss = val_total_loss_epoch / val_total_samples if val_total_samples > 0 else 0
     avg_val_acc = val_correct_predictions / val_total_samples if val_total_samples > 0 else 0
-    print(f'Epoch {epoch + 1} Val Summary: Avg Loss: {avg_val_loss:.4f}, Avg Acc: {avg_val_acc:.4f}')
+    avg_val_top5 = top5_correct / val_total_samples if val_total_samples > 0 else 0
+    avg_val_macro_f1 = compute_macro_f1(all_preds, all_labels) if all_labels else 0.0
+    print(
+        f'Epoch {epoch + 1} Val Summary: Avg Loss: {avg_val_loss:.4f}, '
+        f'Top-1: {avg_val_acc:.4f}, Top-5: {avg_val_top5:.4f}, Macro-F1: {avg_val_macro_f1:.4f}'
+    )
 
     val_metrics = {
         'val_loss': avg_val_loss,
         'val_acc': avg_val_acc,
+        'val_top1': avg_val_acc,
+        'val_top5': avg_val_top5,
+        'val_macro_f1': avg_val_macro_f1,
+        'val_score': compute_checkpoint_score({
+            'val_top1': avg_val_acc,
+            'val_macro_f1': avg_val_macro_f1
+        }),
         'val_reid_l': avg_val_loss
     }
     return val_metrics
@@ -772,6 +845,8 @@ if __name__ == "__main__":
     log_freq = args.log_freq
     use_warmup_simple = args.warmup_simple
     window_size = args.window_size
+    thesis_tuned = args.thesis_tuned
+    dataset_root = args.dataset_root.strip() or None
 
     # 如果启用调试模式，修改参数
     if debug_mode:
@@ -807,8 +882,8 @@ if __name__ == "__main__":
     accumulation_steps = 2
 
     use_sam_model = not args.disable_sam
-    sam_model_path = "E:\Mypaper2\conf\sam2.1_hiera_tiny.pt"
-    sam_model_cfg = "E:\Mypaper2\conf\sam2.1_hiera_t.yaml"
+    sam_model_path = r"E:\Mypaper2\conf\sam2.1_hiera_tiny.pt"
+    sam_model_cfg = r"E:\Mypaper2\conf\sam2.1_hiera_t.yaml"
     # 模型参数 - 更保守的设置
     latent_channels = 4
     pds_lrm_layers = 2
@@ -835,18 +910,29 @@ if __name__ == "__main__":
 
     # 损失权重 - 更保守的设置
     losses_weights = {
-        'rec': 0.3,  # 增加重建损失权重
-        'lsc': 0.8,  # 增加一致性损失权重
-        'g_disc': 0.1,  # 减少判别损失权重
-        'center': 0.03,  # 新增center loss权重
-        'domain_adapt': 0.05  # 降低域适应损失权重，修复梯度流后重新调试
+        'rec': 0.3,
+        'lsc': 0.8,
+        'g_disc': 0.1,
+        'center': 0.03,
+        'domain_adapt': 0.05
     }
+
+    if thesis_tuned:
+        losses_weights = {
+            'rec': 0.15,
+            'lsc': 0.10,
+            'g_disc': 0.10,
+            'center': 0.02,
+            'domain_adapt': 0.0
+        }
 
     # 梯度裁剪阈值
     grad_clip_norm = 2.0
 
     # 保存设置
     model_name_suffix = f"{'_sam' if use_sam_model else ''}_win{window_size}"
+    if thesis_tuned:
+        model_name_suffix += "_thesis_tuned"
     save_dir = f'newdata-logs/swin{model_name_suffix}_iters{latent_inversion_iters}_k{sub_centers_k}_s{arcface_s}_m{arcface_m}_rec{losses_weights["rec"]}_lsc{losses_weights["lsc"]}_gdisc{losses_weights["g_disc"]}'
     save_period = 2
     if not os.path.exists(save_dir): os.makedirs(save_dir)
@@ -885,8 +971,8 @@ if __name__ == "__main__":
     num_classes = get_num_classes(annotation_path)
     print(f"检测到 {num_classes} 个类别")
 
-    with open(annotation_path, "r", encoding='utf-8') as f:
-        lines = f.readlines()
+    lines, rewrite_info = rewrite_annotation_lines(annotation_path, dataset_root=dataset_root)
+    print(f"标注路径重写信息: {rewrite_info}")
     np.random.seed(seed)
     np.random.shuffle(lines)
     np.random.seed(None)
@@ -902,9 +988,18 @@ if __name__ == "__main__":
 
     if len(train_dataset) == 0: raise ValueError("Train dataset empty!")
 
-    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,
-                                  pin_memory=True, drop_last=True, collate_fn=sgpd_dataset_collate,
-                                  worker_init_fn=partial(worker_init_fn, seed=seed))
+    train_sampler = build_weighted_sampler(train_dataset.labels) if thesis_tuned else None
+    train_dataloader = DataLoader(
+        train_dataset,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        collate_fn=sgpd_dataset_collate,
+        worker_init_fn=partial(worker_init_fn, seed=seed)
+    )
     val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers,
                                 pin_memory=True, drop_last=False, collate_fn=sgpd_dataset_collate,
                                 worker_init_fn=partial(worker_init_fn, seed=seed))
@@ -927,7 +1022,14 @@ if __name__ == "__main__":
 
     # 初始化检查点恢复相关变量
     start_epoch = Init_Epoch
-    best_metrics = {'val_loss': float('inf'), 'val_acc': 0.0}
+    best_metrics = {
+        'val_loss': float('inf'),
+        'val_acc': 0.0,
+        'val_top1': 0.0,
+        'val_top5': 0.0,
+        'val_macro_f1': 0.0,
+        'val_score': 0.0
+    }
 
     # 加载检查点（如果提供）
     if args.resume and os.path.exists(args.resume):
@@ -974,6 +1076,7 @@ if __name__ == "__main__":
             # 恢复最佳指标（如果有）
             if 'metrics' in checkpoint:
                 best_metrics = checkpoint['metrics']
+                best_metrics['val_score'] = compute_checkpoint_score(best_metrics)
                 print(
                     f"已恢复指标: val_loss={best_metrics.get('val_loss', 'N/A')}, val_acc={best_metrics.get('val_acc', 'N/A')}")
 
@@ -1013,6 +1116,8 @@ if __name__ == "__main__":
         arcface_s=arcface_s,
         arcface_m=arcface_m,
         use_warmup_simple=use_warmup_simple,
+        thesis_tuned=thesis_tuned,
+        dataset_root=dataset_root,
         window_size=window_size,
         use_sam_model=use_sam_model,
 
@@ -1153,6 +1258,9 @@ if __name__ == "__main__":
         'annotation_path': annotation_path,
         'val_split': val_split,
         'seed': seed,
+        'thesis_tuned': thesis_tuned,
+        'dataset_root': dataset_root,
+        'annotation_rewrite_info': rewrite_info,
         'fp16': fp16,
         'use_warmup_simple': use_warmup_simple,
         'device': str(device),
@@ -1165,6 +1273,7 @@ if __name__ == "__main__":
         'gpu_info': torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only',
         'window_size': window_size,
         'use_sam_model': use_sam_model,
+        'class_balanced_sampler': thesis_tuned,
 
         'sam_model_path': sam_model_path if use_sam_model else "None",
     }
@@ -1176,7 +1285,9 @@ if __name__ == "__main__":
         epoch_start_time = time.time()
 
         # 动态调整损失权重 - 使用改进的策略
-        current_losses_weights = get_dynamic_loss_weights(epoch, Epoch, use_warmup_simple, losses_weights)
+        current_losses_weights = get_dynamic_loss_weights(
+            epoch, Epoch, use_warmup_simple, losses_weights, thesis_tuned=thesis_tuned
+        )
         print(f"\n当前损失权重:")
         print(f"  rec={current_losses_weights['rec']:.3f}, lsc={current_losses_weights['lsc']:.3f}")
         print(f"  g_disc={current_losses_weights['g_disc']:.3f}, center={current_losses_weights['center']:.3f}")
@@ -1202,7 +1313,15 @@ if __name__ == "__main__":
         )
 
         # 验证
-        val_metrics = {'val_loss': 0.0, 'val_acc': 0.0, 'val_reid_l': 0.0}
+        val_metrics = {
+            'val_loss': 0.0,
+            'val_acc': 0.0,
+            'val_top1': 0.0,
+            'val_top5': 0.0,
+            'val_macro_f1': 0.0,
+            'val_score': 0.0,
+            'val_reid_l': 0.0
+        }
         if epoch_step_val > 0:
             val_metrics = eval_one_epoch(model, epoch, epoch_step_val, val_dataloader, device)
 
@@ -1213,6 +1332,22 @@ if __name__ == "__main__":
         # 记录日志
         all_metrics = {**train_metrics, **val_metrics}
         loss_history.append_loss(epoch, all_metrics)
+
+        if val_metrics['val_score'] > best_metrics.get('val_score', 0.0):
+            best_metrics.update({
+                'val_acc': val_metrics['val_acc'],
+                'val_top1': val_metrics['val_top1'],
+                'val_top5': val_metrics['val_top5'],
+                'val_macro_f1': val_metrics['val_macro_f1'],
+                'val_loss': val_metrics['val_loss'],
+                'val_score': val_metrics['val_score']
+            })
+            best_checkpoint_path = os.path.join(save_dir, 'checkpoint_best.pth')
+            save_checkpoint(model, optimizer, scheduler, epoch, best_metrics, best_checkpoint_path)
+            print(
+                f"保存新的最佳模型，val_score = {best_metrics['val_score']:.4f}, "
+                f"Top-1 = {best_metrics['val_top1']:.4f}, Macro-F1 = {best_metrics['val_macro_f1']:.4f}"
+            )
 
         # 保存模型
         if (epoch + 1) % save_period == 0 or epoch + 1 == Epoch:
@@ -1243,14 +1378,6 @@ if __name__ == "__main__":
                 metrics={**train_metrics, **val_metrics},
                 save_path=latest_checkpoint_path
             )
-
-            # 如果是最佳验证性能，保存最佳模型检查点
-            if val_metrics['val_acc'] > best_metrics.get('val_acc', 0):
-                best_metrics['val_acc'] = val_metrics['val_acc']
-                best_metrics['val_loss'] = val_metrics['val_loss']
-                best_checkpoint_path = os.path.join(save_dir, 'checkpoint_best.pth')
-                save_checkpoint(model, optimizer, scheduler, epoch, best_metrics, best_checkpoint_path)
-                print(f"保存新的最佳模型，val_acc = {best_metrics['val_acc']:.4f}")
 
         epoch_end_time = time.time()
         print(f"第 {epoch + 1} 轮训练完成，用时 {epoch_end_time - epoch_start_time:.2f} 秒。")
@@ -1291,7 +1418,11 @@ if __name__ == "__main__":
             print(f"释放SAM资源时出错: {e}")
 
     loss_history.close_writer()
-    print(f"训练完成，最佳验证准确率: {best_metrics.get('val_acc', 0):.4f}")
+    print(
+        f"训练完成，最佳验证 Top-1: {best_metrics.get('val_top1', best_metrics.get('val_acc', 0)):.4f}, "
+        f"Macro-F1: {best_metrics.get('val_macro_f1', 0):.4f}, "
+        f"Score: {best_metrics.get('val_score', 0):.4f}"
+    )
 
     # 输出最终训练总结
     print("\n" + "=" * 50)
@@ -1300,7 +1431,13 @@ if __name__ == "__main__":
     print(f"模型参数: 总计 {total_params:,} 参数，其中 {trainable_params:,} 可训练")
     print(f"训练样本: {len(train_dataset)} 个，验证样本: {len(val_dataset)} 个")
     print(f"训练轮次: {Epoch} 轮，批次大小: {batch_size}")
-    print(f"最佳验证准确率: {best_metrics.get('val_acc', 0):.4f}，对应损失: {best_metrics.get('val_loss', 0):.4f}")
+    print(
+        f"最佳验证指标: Top-1 {best_metrics.get('val_top1', best_metrics.get('val_acc', 0)):.4f}, "
+        f"Top-5 {best_metrics.get('val_top5', 0):.4f}, "
+        f"Macro-F1 {best_metrics.get('val_macro_f1', 0):.4f}, "
+        f"Score {best_metrics.get('val_score', 0):.4f}, "
+        f"Loss {best_metrics.get('val_loss', 0):.4f}"
+    )
     print(f"最佳模型保存在: {os.path.join(save_dir, 'checkpoint_best.pth')}")
     print(f"SAM模型: {'已启用' if use_sam_model else '未启用'}")
     print(f"窗口大小: {window_size}")

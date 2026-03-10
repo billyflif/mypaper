@@ -50,8 +50,17 @@ def get_num_classes(annotation_path):
     if not os.path.exists(annotation_path):
         raise FileNotFoundError(f"未找到标注文件: {annotation_path}")
 
-    with open(annotation_path, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
+    lines = None
+    for encoding in ('utf-8', 'gbk', 'gb18030'):
+        try:
+            with open(annotation_path, 'r', encoding=encoding) as f:
+                lines = f.readlines()
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if lines is None:
+        raise RuntimeError(f"无法读取标注文件: {annotation_path}")
 
     for line in lines:
         parts = line.strip().split(';')
